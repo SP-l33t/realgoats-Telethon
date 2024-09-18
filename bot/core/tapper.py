@@ -1,5 +1,6 @@
 import aiohttp
 import asyncio
+import fasteners
 import functools
 import os
 import random
@@ -16,7 +17,7 @@ from telethon.functions import messages, contacts
 from .agents import generate_random_user_agent
 from bot.config import settings
 from typing import Callable
-from bot.utils import logger, log_error, proxy_utils, config_utils, CONFIG_PATH
+from bot.utils import logger, log_error, proxy_utils, config_utils, CONFIG_PATH, SESSIONS_PATH
 from bot.exceptions import InvalidSession
 from .headers import headers, get_sec_ch_ua
 
@@ -38,6 +39,7 @@ class Tapper:
         self.session_name, _ = os.path.splitext(os.path.basename(tg_client.session.filename))
         self.config = config_utils.get_session_config(self.session_name, CONFIG_PATH)
         self.proxy = self.config.get('proxy', None)
+        self.lock = fasteners.InterProcessLock(os.path.join(SESSIONS_PATH, f"{self.session_name}.lock"))
         self.tg_web_data = None
         self.tg_client_id = 0
         self.headers = headers
@@ -69,6 +71,7 @@ class Tapper:
         try:
             if not self.tg_client.is_connected():
                 try:
+                    self.lock.acquire()
                     await self.tg_client.start()
                 except (UnauthorizedError, AuthKeyUnregisteredError):
                     raise InvalidSession(self.session_name)
@@ -110,6 +113,7 @@ class Tapper:
 
             if self.tg_client.is_connected():
                 await self.tg_client.disconnect()
+                self.lock.release()
 
             return init_data
 
@@ -237,8 +241,10 @@ class Tapper:
 
 
 async def run_tapper(tg_client: TelegramClient):
+    runner = Tapper(tg_client=tg_client)
     try:
-        await Tapper(tg_client=tg_client).run()
-    except InvalidSession:
-        session_name, _ = os.path.splitext(os.path.basename(tg_client.session.filename))
-        logger.error(f"<light-yellow>{session_name}</light-yellow> | Invalid Session")
+        await runner.run()
+    except InvalidSession as e:
+        logger.error(runner.log_message(f"Invalid Session: {e}"))
+    finally:
+        runner.lock.release()
