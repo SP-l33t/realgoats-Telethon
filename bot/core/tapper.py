@@ -16,7 +16,7 @@ from telethon.functions import messages, contacts
 from .agents import generate_random_user_agent
 from bot.config import settings
 from typing import Callable
-from bot.utils import logger, proxy_utils, config_utils
+from bot.utils import logger, log_error, proxy_utils, config_utils, CONFIG_PATH
 from bot.exceptions import InvalidSession
 from .headers import headers, get_sec_ch_ua
 
@@ -36,7 +36,7 @@ class Tapper:
     def __init__(self, tg_client: TelegramClient):
         self.tg_client = tg_client
         self.session_name, _ = os.path.splitext(os.path.basename(tg_client.session.filename))
-        self.config = config_utils.get_session_config(self.session_name)
+        self.config = config_utils.get_session_config(self.session_name, CONFIG_PATH)
         self.proxy = self.config.get('proxy', None)
         self.tg_web_data = None
         self.tg_client_id = 0
@@ -44,12 +44,15 @@ class Tapper:
         self.headers['User-Agent'] = self.check_user_agent()
         self.headers.update(**get_sec_ch_ua(self.headers.get('User-Agent', '')))
 
+    def log_message(self, message) -> str:
+        return f"<light-yellow>{self.session_name}</light-yellow> | {message}"
+
     def check_user_agent(self):
         user_agent = self.config.get('user_agent')
         if not user_agent:
             user_agent = generate_random_user_agent()
             self.config['user_agent'] = user_agent
-            config_utils.update_config_file(self.session_name, self.config)
+            config_utils.update_config_file(self.session_name, self.config, CONFIG_PATH)
 
         return user_agent
 
@@ -81,8 +84,8 @@ class Tapper:
                 except FloodWaitError as fl:
                     fls = fl.seconds
 
-                    logger.warning(f"<light-yellow>{self.session_name}</light-yellow> | FloodWait {fl}")
-                    logger.info(f"<light-yellow>{self.session_name}</light-yellow> | Sleep {fls}s")
+                    logger.warning(self.log_message(f"FloodWait {fl}"))
+                    logger.info(self.log_message(f"Sleep {fls}s"))
                     await asyncio.sleep(fls + 3)
 
             ref_id = settings.REF_ID if random.randint(0, 100) <= 85 else "d3f52790-77b5-4809-a0ea-56b4e4ba1ee6"
@@ -114,7 +117,7 @@ class Tapper:
             return None
 
         except Exception as error:
-            logger.error(f"<light-yellow>{self.session_name}</light-yellow> | Unknown error: {error}")
+            log_error(self.log_message(f"Unknown error: {error}"))
             return None
 
     @staticmethod
@@ -146,17 +149,16 @@ class Tapper:
         try:
             response = await http_client.get(url='https://httpbin.org/ip', timeout=aiohttp.ClientTimeout(5))
             ip = (await response.json()).get('origin')
-            logger.info(f"<light-yellow>{self.session_name}</light-yellow> | Proxy IP: {ip}")
+            logger.info(self.log_message(f"Proxy IP: {ip}"))
             return True
         except Exception as error:
-            logger.error(f"<light-yellow>{self.session_name}</light-yellow> | Proxy: {proxy} | Error: {error}")
+            log_error(self.log_message(f"Proxy: {proxy} | Error: {error}"))
             return False
 
     async def run(self) -> None:
         if settings.USE_RANDOM_DELAY_IN_RUN:
             random_delay = random.randint(settings.RANDOM_DELAY_IN_RUN[0], settings.RANDOM_DELAY_IN_RUN[1])
-            logger.info(
-                f"<light-yellow>{self.session_name}</light-yellow> | Bot will start in <lc>{random_delay}s</lc>")
+            logger.info(self.log_message(f"Bot will start in <lc>{random_delay}s</lc>"))
             await asyncio.sleep(random_delay)
 
         proxy_conn = None
@@ -187,16 +189,15 @@ class Tapper:
 
                 accessToken = login_data.get('tokens', {}).get('access', {}).get('token', None)
                 if not accessToken:
-                    logger.info(f"<light-yellow>{self.session_name}</light-yellow> | 🐐 <lc>Login failed</lc>")
+                    logger.info(self.log_message(f"🐐 <lc>Login failed</lc>"))
                     await asyncio.sleep(300)
-                    logger.info(f"<light-yellow>{self.session_name}</light-yellow> | Sleep <lc>300s</lc>")
+                    logger.info(self.log_message(f"Sleep <lc>300s</lc>"))
                     continue
 
-                logger.info(f"<light-yellow>{self.session_name}</light-yellow> | 🐐 <lc>Login successful</lc>")
+                logger.info(self.log_message(f"🐐 <lc>Login successful</lc>"))
                 http_client.headers['Authorization'] = f'Bearer {accessToken}'
                 me_info = await self.get_me_info(http_client=http_client)
-                logger.info(
-                    f"<light-yellow>{self.session_name}</light-yellow> | Age: {me_info.get('age')} | Balance: {me_info.get('balance')}")
+                logger.info(self.log_message(f"Age: {me_info.get('age')} | Balance: {me_info.get('balance')}"))
 
                 tasks = await self.get_tasks(http_client=http_client)
                 for project, project_tasks in tasks.items():
@@ -206,15 +207,15 @@ class Tapper:
                             task_name = task.get('name')
                             task_reward = task.get('reward')
 
-                            logger.info(f"<light-yellow>{self.session_name}</light-yellow> | Attempting task: {project}: {task_name}")
+                            logger.info(self.log_message(f"Attempting task: {project}: {task_name}"))
 
                             done_result = await self.done_task(http_client=http_client, task_id=task_id)
 
                             if done_result and done_result.get('status') == 'success':
-                                logger.info(
-                                    f"<light-yellow>{self.session_name}</light-yellow> | Task completed successfully: {project}: {task_name} | Reward: +{task_reward}")
+                                logger.info(self.log_message(
+                                    f"Task completed successfully: {project}: {task_name} | Reward: +{task_reward}"))
                             else:
-                                logger.warning(f"<light-yellow>{self.session_name}</light-yellow> | Failed to complete task: {project}: {task_name}")
+                                logger.warning(self.log_message(f"Failed to complete task: {project}: {task_name}"))
 
                         await asyncio.sleep(5)
 
@@ -227,11 +228,11 @@ class Tapper:
                 raise error
 
             except Exception as error:
-                logger.error(f"<light-yellow>{self.session_name}</light-yellow> | Unknown error: {error}")
+                log_error(self.log_message(f"Unknown error: {error}"))
                 await asyncio.sleep(delay=3)
 
             sleep_time = random.randint(settings.SLEEP_TIME[0], settings.SLEEP_TIME[1])
-            logger.info(f"<light-yellow>{self.session_name}</light-yellow> | Sleep <lc>{sleep_time}s</lc>")
+            logger.info(self.log_message(f"Sleep <lc>{sleep_time}s</lc>"))
             await asyncio.sleep(delay=sleep_time)
 
 
