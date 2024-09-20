@@ -17,7 +17,7 @@ from telethon.functions import messages, contacts
 from .agents import generate_random_user_agent
 from bot.config import settings
 from typing import Callable
-from bot.utils import logger, log_error, proxy_utils, config_utils, CONFIG_PATH, SESSIONS_PATH
+from bot.utils import logger, log_error, proxy_utils, config_utils, date_utils, CONFIG_PATH, SESSIONS_PATH
 from bot.exceptions import InvalidSession
 from .headers import headers, get_sec_ch_ua
 
@@ -150,6 +150,15 @@ class Tapper:
         return await self.make_request(http_client, 'POST',
                                        url=f'https://dev-api.goatsbot.xyz/missions/action/{task_id}')
 
+    @error_handler
+    async def get_checkin_options(self, http_client: aiohttp.ClientSession):
+        return await self.make_request(http_client, 'GET', url="https://api-checkin.goatsbot.xyz/checkin/user")
+
+    @error_handler
+    async def perform_checkin(self, http_client: aiohttp.ClientSession, checkin_id: str):
+        return await self.make_request(http_client, 'POST',
+                                       url=f'https://api-checkin.goatsbot.xyz/checkin/action/{checkin_id}')
+
     async def check_proxy(self, http_client: aiohttp.ClientSession, proxy: str) -> bool:
         try:
             response = await http_client.get(url='https://httpbin.org/ip', timeout=aiohttp.ClientTimeout(5))
@@ -223,6 +232,18 @@ class Tapper:
                                 logger.warning(self.log_message(f"Failed to complete task: {project}: {task_name}"))
 
                         await asyncio.sleep(5)
+
+                checkin = await self.get_checkin_options(http_client=http_client)
+                last_checkin = checkin.get('lastCheckinTime')
+                if checkin and last_checkin is not None:
+                    for day in checkin.get('result', []):
+                        if (last_checkin == 0 or date_utils.is_next_day(last_checkin)) and day.get('status') is False:
+                            result = await self.perform_checkin(http_client=http_client, checkin_id=day.get('_id'))
+                            if result.get('status') == "success":
+                                logger.success(self.log_message("Successfully checked in: {day.get('reward')} points"))
+                                break
+                            else:
+                                logger.warning(self.log_message("Failed to perform checkin activity"))
 
                 await http_client.close()
                 if proxy_conn:

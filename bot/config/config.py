@@ -10,7 +10,7 @@ class Settings(BaseSettings):
 
     REF_ID: str = "d3f52790-77b5-4809-a0ea-56b4e4ba1ee6"
     USE_RANDOM_DELAY_IN_RUN: bool = True
-    RANDOM_DELAY_IN_RUN: list[int] = [0, 15]
+    RANDOM_DELAY_IN_RUN: list[int] = [0, 30]
     SLEEP_TIME: list[int] = [1800, 3600]
     
     USE_PROXY_FROM_FILE: bool = False
