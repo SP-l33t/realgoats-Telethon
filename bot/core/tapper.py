@@ -81,7 +81,7 @@ class Tapper:
             async with self.tg_client as client:
                 while True:
                     try:
-                        resolve_result = await self.tg_client(contacts.ResolveUsernameRequest(username='realgoats_bot'))
+                        resolve_result = await client(contacts.ResolveUsernameRequest(username='realgoats_bot'))
                         peer = InputPeerUser(user_id=resolve_result.peer.user_id,
                                              access_hash=resolve_result.users[0].access_hash)
                         break
@@ -97,7 +97,7 @@ class Tapper:
                 input_user = InputUser(user_id=resolve_result.peer.user_id, access_hash=resolve_result.users[0].access_hash)
                 input_bot_app = InputBotAppShortName(bot_id=input_user, short_name="run")
 
-                web_view = await self.tg_client(messages.RequestAppWebViewRequest(
+                web_view = await client(messages.RequestAppWebViewRequest(
                     peer=peer,
                     app=input_bot_app,
                     platform='android',
@@ -109,7 +109,7 @@ class Tapper:
                 init_data = unquote(
                     string=auth_url.split('tgWebAppData=', maxsplit=1)[1].split('&tgWebAppVersion', maxsplit=1)[0])
 
-                me = await self.tg_client.get_me()
+                me = await client.get_me()
                 self.tg_client_id = me.id
 
         return init_data
