@@ -25,11 +25,20 @@ from .headers import headers, get_sec_ch_ua
 def error_handler(func: Callable):
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
-        try:
-            return await func(*args, **kwargs)
-        except Exception as e:
-            await asyncio.sleep(1)
-
+        retries = 2
+        while retries >= 0:
+            try:
+                return await func(*args, **kwargs)
+            except (asyncio.exceptions.TimeoutError, aiohttp.ServerDisconnectedError,
+                    aiohttp.ClientProxyConnectionError) as e:
+                if retries > 0:
+                    log_error(f"Error: {type(e).__name__}. Retrying")
+                    retries -= 1
+                    await asyncio.sleep(1)
+                else:
+                    raise
+            except Exception as e:
+                await asyncio.sleep(1)
     return wrapper
 
 
@@ -65,68 +74,48 @@ class Tapper:
             proxy_dict = proxy_utils.to_telethon_proxy(proxy)
         else:
             proxy_dict = None
-
         self.tg_client.set_proxy(proxy_dict)
 
-        try:
-            if not self.tg_client.is_connected():
-                try:
-                    self.lock.acquire()
-                    await self.tg_client.start()
-                except (UnauthorizedError, AuthKeyUnregisteredError):
-                    raise InvalidSession(self.session_name)
-                except (UserDeactivatedError, UserDeactivatedBanError, PhoneNumberBannedError):
-                    raise InvalidSession(f"{self.session_name}: User is banned")
+        init_data = None
+        with self.lock:
+            async with self.tg_client as client:
+                while True:
+                    try:
+                        resolve_result = await self.tg_client(contacts.ResolveUsernameRequest(username='realgoats_bot'))
+                        peer = InputPeerUser(user_id=resolve_result.peer.user_id,
+                                             access_hash=resolve_result.users[0].access_hash)
+                        break
+                    except FloodWaitError as fl:
+                        fls = fl.seconds
 
-            while True:
-                try:
-                    resolve_result = await self.tg_client(contacts.ResolveUsernameRequest(username='realgoats_bot'))
-                    peer = InputPeerUser(user_id=resolve_result.peer.user_id,
-                                         access_hash=resolve_result.users[0].access_hash)
-                    break
-                except FloodWaitError as fl:
-                    fls = fl.seconds
+                        logger.warning(self.log_message(f"FloodWait {fl}"))
+                        logger.info(self.log_message(f"Sleep {fls}s"))
+                        await asyncio.sleep(fls + 3)
 
-                    logger.warning(self.log_message(f"FloodWait {fl}"))
-                    logger.info(self.log_message(f"Sleep {fls}s"))
-                    await asyncio.sleep(fls + 3)
+                ref_id = settings.REF_ID if random.randint(0, 100) <= 85 else "d3f52790-77b5-4809-a0ea-56b4e4ba1ee6"
 
-            ref_id = settings.REF_ID if random.randint(0, 100) <= 85 else "d3f52790-77b5-4809-a0ea-56b4e4ba1ee6"
+                input_user = InputUser(user_id=resolve_result.peer.user_id, access_hash=resolve_result.users[0].access_hash)
+                input_bot_app = InputBotAppShortName(bot_id=input_user, short_name="run")
 
-            input_user = InputUser(user_id=resolve_result.peer.user_id, access_hash=resolve_result.users[0].access_hash)
-            input_bot_app = InputBotAppShortName(bot_id=input_user, short_name="run")
+                web_view = await self.tg_client(messages.RequestAppWebViewRequest(
+                    peer=peer,
+                    app=input_bot_app,
+                    platform='android',
+                    write_allowed=True,
+                    start_param=ref_id
+                ))
 
-            web_view = await self.tg_client(messages.RequestAppWebViewRequest(
-                peer=peer,
-                app=input_bot_app,
-                platform='android',
-                write_allowed=True,
-                start_param=ref_id
-            ))
+                auth_url = web_view.url
+                init_data = unquote(
+                    string=auth_url.split('tgWebAppData=', maxsplit=1)[1].split('&tgWebAppVersion', maxsplit=1)[0])
 
-            auth_url = web_view.url
-            init_data = unquote(
-                string=auth_url.split('tgWebAppData=', maxsplit=1)[1].split('&tgWebAppVersion', maxsplit=1)[0])
+                me = await self.tg_client.get_me()
+                self.tg_client_id = me.id
 
-            me = await self.tg_client.get_me()
-            self.tg_client_id = me.id
-
-            if self.tg_client.is_connected():
-                await self.tg_client.disconnect()
-                if self.lock.acquired:
-                    self.lock.release()
-
-            return init_data
-
-        except InvalidSession as error:
-            return None
-
-        except Exception as error:
-            log_error(self.log_message(f"Unknown error: {error}"))
-            return None
+        return init_data
 
     @staticmethod
-    async def make_request(http_client, method, url=None, **kwargs):
+    async def make_request(http_client: aiohttp.ClientSession, method, url=None, **kwargs):
         response = await http_client.request(method, url, **kwargs)
         response.raise_for_status()
         response_json = await response.json()
@@ -161,7 +150,7 @@ class Tapper:
 
     async def check_proxy(self, http_client: aiohttp.ClientSession, proxy: str) -> bool:
         try:
-            response = await http_client.get(url='https://httpbin.org/ip', timeout=aiohttp.ClientTimeout(5))
+            response = await http_client.get(url='https://httpbin.org/ip', timeout=aiohttp.ClientTimeout(10))
             ip = (await response.json()).get('origin')
             logger.info(self.log_message(f"Proxy IP: {ip}"))
             return True
@@ -178,14 +167,14 @@ class Tapper:
         proxy_conn = None
         if self.proxy:
             proxy_conn = ProxyConnector().from_url(self.proxy)
-            http_client = CloudflareScraper(headers=self.headers, connector=proxy_conn)
+            http_client = CloudflareScraper(headers=self.headers, connector=proxy_conn, timeout=aiohttp.ClientTimeout(60))
             p_type = proxy_conn._proxy_type
             p_host = proxy_conn._proxy_host
             p_port = proxy_conn._proxy_port
             if not await self.check_proxy(http_client=http_client, proxy=f"{p_type}://{p_host}:{p_port}"):
                 return
         else:
-            http_client = CloudflareScraper(headers=self.headers)
+            http_client = CloudflareScraper(headers=self.headers, timeout=aiohttp.ClientTimeout(30))
 
         init_data = await self.get_tg_web_data()
 
