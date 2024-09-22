@@ -54,7 +54,7 @@ class Tapper:
         if not user_agent:
             user_agent = generate_random_user_agent()
             self.config['user_agent'] = user_agent
-            config_utils.update_config_file(self.session_name, self.config, CONFIG_PATH)
+            config_utils.update_session_config_in_file(self.session_name, self.config, CONFIG_PATH)
 
         return user_agent
 
@@ -240,7 +240,7 @@ class Tapper:
                         if (last_checkin == 0 or date_utils.is_next_day(last_checkin)) and day.get('status') is False:
                             result = await self.perform_checkin(http_client=http_client, checkin_id=day.get('_id'))
                             if result.get('status') == "success":
-                                logger.success(self.log_message("Successfully checked in: {day.get('reward')} points"))
+                                logger.success(self.log_message(f"Successfully checked in: {day.get('reward')} points"))
                                 break
                             else:
                                 logger.warning(self.log_message("Failed to perform checkin activity"))
