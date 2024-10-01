@@ -2,7 +2,7 @@ import os
 
 from .logger import logger, log_error
 from .async_lock import AsyncInterProcessLock
-from . import proxy_utils, config_utils
+from . import proxy_utils, config_utils, date_utils
 from bot.config import settings
 
 
