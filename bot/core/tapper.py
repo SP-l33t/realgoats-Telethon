@@ -11,7 +11,7 @@ from time import time
 
 from telethon import TelegramClient
 from telethon.errors import *
-from telethon.types import InputBotAppShortName
+from telethon.types import InputBotAppShortName, InputUser
 from telethon.functions import messages
 
 from .agents import generate_random_user_agent
@@ -46,39 +46,40 @@ class Tapper:
     def __init__(self, tg_client: TelegramClient):
         self.tg_client = tg_client
         self.session_name, _ = os.path.splitext(os.path.basename(tg_client.session.filename))
-        self.config = config_utils.get_session_config(self.session_name, CONFIG_PATH)
-        self.proxy = self.config.get('proxy')
         self.lock = AsyncInterProcessLock(os.path.join(os.path.dirname(CONFIG_PATH), 'lock_files',  f"{self.session_name}.lock"))
-        self.tg_web_data = None
-        self.tg_client_id = 0
         self.headers = headers
 
-        self._webview_data = None
+        session_config = config_utils.get_session_config(self.session_name, CONFIG_PATH)
 
+        if not all(key in session_config for key in ('api_id', 'api_hash', 'user_agent')):
+            logger.critical(self.log_message('CHECK accounts_config.json as it might be corrupted'))
+            exit(-1)
+
+        user_agent = session_config.get('user_agent')
+        self.headers['user-agent'] = user_agent
+        self.headers.update(**get_sec_ch_ua(user_agent))
+
+        self.proxy = session_config.get('proxy')
         if self.proxy:
             proxy = Proxy.from_str(self.proxy)
             proxy_dict = proxy_utils.to_telethon_proxy(proxy)
             self.tg_client.set_proxy(proxy_dict)
 
+        self.tg_web_data = None
+        self.tg_client_id = 0
+
+        self._webview_data = None
+
     def log_message(self, message) -> str:
         return f"<light-yellow>{self.session_name}</light-yellow> | {message}"
-
-    async def check_user_agent(self):
-        user_agent = self.config.get('user_agent')
-        if not user_agent:
-            user_agent = generate_random_user_agent()
-            self.config['user_agent'] = user_agent
-            await config_utils.update_session_config_in_file(self.session_name, self.config, CONFIG_PATH)
-
-        self.headers['User-Agent'] = user_agent
-        self.headers.update(**get_sec_ch_ua(user_agent))
 
     async def initialize_webview_data(self):
         if not self._webview_data:
             while True:
                 try:
                     peer = await self.tg_client.get_input_entity('realgoats_bot')
-                    input_bot_app = InputBotAppShortName(bot_id=peer, short_name="run")
+                    bot_id = InputUser(user_id=peer.user_id, access_hash=peer.access_hash)
+                    input_bot_app = InputBotAppShortName(bot_id=bot_id, short_name="run")
                     self._webview_data = {'peer': peer, 'app': input_bot_app}
                     break
                 except FloodWaitError as fl:
@@ -90,12 +91,19 @@ class Tapper:
                     raise InvalidSession(f"{self.session_name}: User is banned")
 
     async def get_tg_web_data(self) -> str | None:
+        if self.proxy and not self.tg_client._proxy:
+            logger.critical(self.log_message('Proxy found, but not passed to TelegramClient'))
+            exit(-1)
+
         init_data = None
         async with self.lock:
             try:
                 if not self.tg_client.is_connected():
                     await self.tg_client.connect()
                 await self.initialize_webview_data()
+                await asyncio.sleep(random.uniform(1, 2))
+                me = await self.tg_client.get_me()
+                await asyncio.sleep(random.uniform(1, 2))
 
                 ref_id = settings.REF_ID if random.randint(0, 100) <= 85 else "d3f52790-77b5-4809-a0ea-56b4e4ba1ee6"
 
@@ -110,7 +118,6 @@ class Tapper:
                 init_data = unquote(
                     string=auth_url.split('tgWebAppData=', maxsplit=1)[1].split('&tgWebAppVersion', maxsplit=1)[0])
 
-                me = await self.tg_client.get_me()
                 self.tg_client_id = me.id
 
             except InvalidSession:
@@ -176,10 +183,9 @@ class Tapper:
             return False
 
     async def run(self) -> None:
-        await self.check_user_agent()
         if settings.USE_RANDOM_DELAY_IN_RUN:
-            random_delay = random.randint(settings.RANDOM_DELAY_IN_RUN[0], settings.RANDOM_DELAY_IN_RUN[1])
-            logger.info(self.log_message(f"Bot will start in <lc>{random_delay}s</lc>"))
+            random_delay = random.uniform(settings.RANDOM_DELAY_IN_RUN[0], settings.RANDOM_DELAY_IN_RUN[1])
+            logger.info(self.log_message(f"Bot will start in <lc>{int(random_delay)}s</lc>"))
             await asyncio.sleep(random_delay)
 
         access_token_created_time = 0
