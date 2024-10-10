@@ -6,4 +6,4 @@ def is_next_day(timestamp: int) -> bool:
         timestamp = int(str(timestamp)[0:10])
     then = datetime.utcfromtimestamp(timestamp)
     now = datetime.utcnow()
-    return now.date() > then.date() and now.time().hour > 10
+    return now.date() > then.date() and now.time().hour > 5
