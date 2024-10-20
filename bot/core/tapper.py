@@ -1,22 +1,21 @@
 import aiohttp
 import asyncio
 import functools
-import os
+import json
 import random
-from urllib.parse import unquote
+import re
+from urllib.parse import unquote, parse_qs
 from aiocfscrape import CloudflareScraper
 from aiohttp_proxy import ProxyConnector
 from better_proxy import Proxy
+from random import uniform, randint
 from time import time
 
-from opentele.tl import TelegramClient
-from telethon.errors import *
-from telethon.types import InputBotAppShortName, InputUser
-from telethon.functions import messages
+from bot.utils.universal_telegram_client import UniversalTelegramClient
 
 from bot.config import settings
 from typing import Callable
-from bot.utils import logger, log_error, proxy_utils, config_utils, date_utils, AsyncInterProcessLock, CONFIG_PATH
+from bot.utils import logger, log_error, config_utils, date_utils, CONFIG_PATH, first_run
 from bot.exceptions import InvalidSession
 from .headers import headers, get_sec_ch_ua
 
@@ -42,11 +41,9 @@ def error_handler(func: Callable):
 
 
 class Tapper:
-    def __init__(self, tg_client: TelegramClient):
+    def __init__(self, tg_client: UniversalTelegramClient):
         self.tg_client = tg_client
-        self.session_name, _ = os.path.splitext(os.path.basename(tg_client.session.filename))
-        self.lock = AsyncInterProcessLock(os.path.join(os.path.dirname(CONFIG_PATH), 'lock_files',  f"{self.session_name}.lock"))
-        self.headers = headers
+        self.session_name = tg_client.session_name
 
         session_config = config_utils.get_session_config(self.session_name, CONFIG_PATH)
 
@@ -54,6 +51,7 @@ class Tapper:
             logger.critical(self.log_message('CHECK accounts_config.json as it might be corrupted'))
             exit(-1)
 
+        self.headers = headers
         user_agent = session_config.get('user_agent')
         self.headers['user-agent'] = user_agent
         self.headers.update(**get_sec_ch_ua(user_agent))
@@ -61,8 +59,7 @@ class Tapper:
         self.proxy = session_config.get('proxy')
         if self.proxy:
             proxy = Proxy.from_str(self.proxy)
-            proxy_dict = proxy_utils.to_telethon_proxy(proxy)
-            self.tg_client.set_proxy(proxy_dict)
+            self.tg_client.set_proxy(proxy)
 
         self.tg_web_data = None
         self.tg_client_id = 0
@@ -72,102 +69,51 @@ class Tapper:
     def log_message(self, message) -> str:
         return f"<ly>{self.session_name}</ly> | {message}"
 
-    async def initialize_webview_data(self):
-        if not self._webview_data:
-            while True:
-                try:
-                    peer = await self.tg_client.get_input_entity('realgoats_bot')
-                    bot_id = InputUser(user_id=peer.user_id, access_hash=peer.access_hash)
-                    input_bot_app = InputBotAppShortName(bot_id=bot_id, short_name="run")
-                    self._webview_data = {'peer': peer, 'app': input_bot_app}
-                    break
-                except FloodWaitError as fl:
-                    logger.warning(self.log_message(f"FloodWait {fl}. Waiting {fl.seconds}s"))
-                    await asyncio.sleep(fl.seconds + 3)
-                except (UnauthorizedError, AuthKeyUnregisteredError):
-                    raise InvalidSession(f"{self.session_name}: User is unauthorized")
-                except (UserDeactivatedError, UserDeactivatedBanError, PhoneNumberBannedError):
-                    raise InvalidSession(f"{self.session_name}: User is banned")
+    async def get_tg_web_data(self) -> str:
+        webview_url = await self.tg_client.get_app_webview_url('realgoats_bot', "run", "d3f52790-77b5-4809-a0ea-56b4e4ba1ee6")
 
-    async def get_tg_web_data(self) -> str | None:
-        if self.proxy and not self.tg_client._proxy:
-            logger.critical(self.log_message('Proxy found, but not passed to TelegramClient'))
-            exit(-1)
+        tg_web_data = unquote(string=webview_url.split('tgWebAppData=')[1].split('&tgWebAppVersion')[0])
+        user_data = json.loads(parse_qs(tg_web_data).get('user', [''])[0])
 
-        init_data = None
-        async with self.lock:
-            try:
-                if not self.tg_client.is_connected():
-                    await self.tg_client.connect()
-                await self.initialize_webview_data()
-                await asyncio.sleep(random.uniform(1, 2))
-                me = await self.tg_client.get_me()
-                await asyncio.sleep(random.uniform(1, 2))
+        self.tg_client_id = user_data.get('id')
 
-                ref_id = settings.REF_ID if random.randint(0, 100) <= 85 else "d3f52790-77b5-4809-a0ea-56b4e4ba1ee6"
-
-                web_view = await self.tg_client(messages.RequestAppWebViewRequest(
-                    **self._webview_data,
-                    platform='android',
-                    write_allowed=True,
-                    start_param=ref_id
-                ))
-
-                auth_url = web_view.url
-                init_data = unquote(
-                    string=auth_url.split('tgWebAppData=', maxsplit=1)[1].split('&tgWebAppVersion', maxsplit=1)[0])
-
-                self.tg_client_id = me.id
-
-            except InvalidSession:
-                raise
-
-            except Exception as error:
-                log_error(self.log_message(f"Unknown error during Authorization: {type(error).__name__}"))
-                await asyncio.sleep(delay=3)
-
-            finally:
-                if self.tg_client.is_connected():
-                    await self.tg_client.disconnect()
-                    await asyncio.sleep(15)
-
-        return init_data
+        return tg_web_data
 
     @staticmethod
-    async def make_request(http_client: aiohttp.ClientSession, method, url=None, **kwargs):
+    async def make_request(http_client: CloudflareScraper, method, url=None, **kwargs):
         response = await http_client.request(method, url, **kwargs)
         response.raise_for_status()
         response_json = await response.json()
         return response_json
 
     @error_handler
-    async def login(self, http_client, init_data):
+    async def login(self, http_client: CloudflareScraper, init_data):
         http_client.headers['Rawdata'] = init_data
         return await self.make_request(http_client, 'POST', url="https://dev-api.goatsbot.xyz/auth/login", json={})
 
     @error_handler
-    async def get_me_info(self, http_client):
+    async def get_me_info(self, http_client: CloudflareScraper):
         return await self.make_request(http_client, 'GET', url="https://api-me.goatsbot.xyz/users/me")
 
     @error_handler
-    async def get_tasks(self, http_client: aiohttp.ClientSession) -> dict:
+    async def get_tasks(self, http_client: CloudflareScraper) -> dict:
         return await self.make_request(http_client, 'GET', url='https://api-mission.goatsbot.xyz/missions/user')
 
     @error_handler
-    async def done_task(self, http_client: aiohttp.ClientSession, task_id: str):
+    async def done_task(self, http_client: CloudflareScraper, task_id: str):
         return await self.make_request(http_client, 'POST',
                                        url=f'https://dev-api.goatsbot.xyz/missions/action/{task_id}')
 
     @error_handler
-    async def get_checkin_options(self, http_client: aiohttp.ClientSession):
+    async def get_checkin_options(self, http_client: CloudflareScraper):
         return await self.make_request(http_client, 'GET', url="https://api-checkin.goatsbot.xyz/checkin/user")
 
     @error_handler
-    async def perform_checkin(self, http_client: aiohttp.ClientSession, checkin_id: str):
+    async def perform_checkin(self, http_client: CloudflareScraper, checkin_id: str):
         return await self.make_request(http_client, 'POST',
                                        url=f'https://api-checkin.goatsbot.xyz/checkin/action/{checkin_id}')
 
-    async def check_proxy(self, http_client: aiohttp.ClientSession) -> bool:
+    async def check_proxy(self, http_client: CloudflareScraper) -> bool:
         proxy_conn = http_client.connector
         if proxy_conn and not hasattr(proxy_conn, '_proxy_host'):
             logger.info(self.log_message(f"Running Proxy-less"))
@@ -221,6 +167,8 @@ class Tapper:
                         continue
 
                     logger.info(self.log_message(f"🐐 <lc>Login successful</lc>"))
+                    if self.tg_client.is_fist_run:
+                        await first_run.append_recurring_session(self.session_name)
                     http_client.headers['Authorization'] = f'Bearer {access_token}'
                     me_info = await self.get_me_info(http_client=http_client)
                     logger.info(self.log_message(f"Age: {me_info.get('age')} | Balance: {me_info.get('balance')}"))
@@ -269,7 +217,7 @@ class Tapper:
                 await asyncio.sleep(delay=sleep_time)
 
 
-async def run_tapper(tg_client: TelegramClient):
+async def run_tapper(tg_client: UniversalTelegramClient):
     runner = Tapper(tg_client=tg_client)
     try:
         await runner.run()

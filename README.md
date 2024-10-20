@@ -1,4 +1,4 @@
-[![Static Badge](https://img.shields.io/badge/Telegram-Channel-Link?style=for-the-badge&logo=Telegram&logoColor=white&logoSize=auto&color=blue)](https://t.me/+jJhUfsfFCn4zZDk0)      [![Static Badge](https://img.shields.io/badge/Telegram-Bot%20Link-Link?style=for-the-badge&logo=Telegram&logoColor=white&logoSize=auto&color=blue)](https://t.me/realgoats_bot/run?startapp=333c4cc1-2ce4-4b17-99f8-7c3797832413)
+[![Static Badge](https://img.shields.io/badge/Telegram-Channel-Link?style=for-the-badge&logo=Telegram&logoColor=white&logoSize=auto&color=blue)](https://t.me/+jJhUfsfFCn4zZDk0)      [![Static Badge](https://img.shields.io/badge/Telegram-Bot%20Link-Link?style=for-the-badge&logo=Telegram&logoColor=white&logoSize=auto&color=blue)](https://t.me/realgoats_bot/run?startapp=d3f52790-77b5-4809-a0ea-56b4e4ba1ee6)
 
 ## Recommendation before use
 
@@ -7,20 +7,26 @@
 > 🇷 🇺 README in russian available [here](README-RU.md)
 
 ## Features  
-|            Feature            | Supported |
-|:-----------------------------:|:---------:|
-|        Multithreading         |     ✅     |
-|   Proxy binding to session    |     ✅     |
-|         Auto Referral         |     ✅     |
-|        Auto Claim Task        |     ✅     |
-| Support for telethon .session |     ✅     |
+|                 Feature                 | Supported |
+|:---------------------------------------:|:---------:|
+|             Multithreading              |     ✅     |
+|        Proxy binding to session         |     ✅     |
+|              Auto Referral              |     ✅     |
+|             Auto Claim Task             |     ✅     |
+| Supports telethon AND pyrogram .session |     ✅     |
+
+_Script searches for session files in the following folders:_
+* /sessions
+* /sessions/pyrogram
+* /session/telethon
 
 
-## [Settings](https://github.com/GravelFire/MajorBot/blob/main/.env-example/)
+## [Settings](https://github.com/SP-l33t/MajorBot/blob/main/.env-example/)
 |          Settings           |                                                                                                                  Description                                                                                                                  |
 |:---------------------------:|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------:|
 |    **API_ID / API_HASH**    |                                                                                   Platform data from which to run the Telegram session (default - android)                                                                                    |
 |   **GLOBAL_CONFIG_PATH**    | Specifies the global path for accounts_config, proxies, sessions. <br/>Specify an absolute path or use an environment variable (default environment variable: **TG_FARM**) <br/>If no environment variable exists, uses the script directory. |
+|        **FIX_CERT**         |                                                                                           Try to fix  SSLCertVerificationError ( True / **False** )                                                                                           |
 |         **REF_ID**          |                                                                                              Your referral id after startapp= (Your telegram ID)                                                                                              |
 | **USE_RANDOM_DELAY_IN_RUN** |                                                                                           Whether to use random delay at startup (**True** / False)                                                                                           |
 |   **RANDOM_DELAY_IN_RUN**   |                                                                                                    Random delay at startup (e.g. [0, 15])                                                                                                     |
@@ -45,10 +51,10 @@ Before you begin, make sure you have the following installed:
 3. Record the API_ID and API_HASH provided after registering your application in the .env file.
 
 ## Installation
-You can download the [**repository**](https://github.com/GravelFire/realgoats_bot) by cloning it to your system and installing the necessary dependencies:
+You can download the [**repository**](https://github.com/SP-l33t/realgoats-Telethon) by cloning it to your system and installing the necessary dependencies:
 ```shell
-git clone https://github.com/GravelFire/realgoats_bot.git
-cd realgoats_bot
+git clone https://github.com/SP-l33t/realgoats-Telethon.git
+cd realgoats-Telethon
 ```
 
 Then you can do automatic installation by typing:
@@ -75,9 +81,9 @@ python3 main.py
 
 You can also use arguments for quick start, for example:
 ```shell
-~/realgoats_bot >>> python3 main.py --action (1/2)
+~/realgoats-Telethon >>> python3 main.py --action (1/2)
 # Or
-~/realgoats_bot >>> python3 main.py -a (1/2)
+~/realgoats-Telethon >>> python3 main.py -a (1/2)
 
 # 1 - Run clicker
 # 2 - Creates a session
@@ -95,9 +101,9 @@ python main.py
 
 You can also use arguments for quick start, for example:
 ```shell
-~/realgoats_bot >>> python main.py --action (1/2)
+~/realgoats-Telethon >>> python main.py --action (1/2)
 # Or
-~/realgoats_bot >>> python main.py -a (1/2)
+~/realgoats-Telethon >>> python main.py -a (1/2)
 
 # 1 - Run clicker
 # 2 - Creates a session

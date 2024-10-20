@@ -1,4 +1,5 @@
-[![Static Badge](https://img.shields.io/badge/Telegram-Channel-Link?style=for-the-badge&logo=Telegram&logoColor=white&logoSize=auto&color=blue)](https://t.me/+jJhUfsfFCn4zZDk0)      [![Static Badge](https://img.shields.io/badge/Telegram-Bot%20Link-Link?style=for-the-badge&logo=Telegram&logoColor=white&logoSize=auto&color=blue)](https://t.me/realgoats_bot/run?startapp=333c4cc1-2ce4-4b17-99f8-7c3797832413)
+[![Static Badge](https://img.shields.io/badge/Telegram-Channel-Link?style=for-the-badge&logo=Telegram&logoColor=white&logoSize=auto&color=blue)](https://t.me/+jJhUfsfFCn4zZDk0)      
+[![Static Badge](https://img.shields.io/badge/Telegram-Bot%20Link-Link?style=for-the-badge&logo=Telegram&logoColor=white&logoSize=auto&color=blue)](https://t.me/realgoats_bot/run?startapp=d3f52790-77b5-4809-a0ea-56b4e4ba1ee6)
 
 ## Рекомендация перед использованием
 
@@ -13,14 +14,20 @@
 |                        Привязка прокси к сессии                        |       ✅        | 
 |                   Авто Реферальство ваших аккаунтов                    |       ✅        |
 | Авто выполнение заданий, которые можно выполнить обычному пользователю |       ✅        |
-|                      Поддержка telethon .session                       |       ✅        |
+|                 Поддержка telethon И pyrogram .session                 |       ✅        |
+
+_Скрипт осуществляет поиск файлов сессий в следующих папках:_
+* /sessions
+* /sessions/pyrogram
+* /session/telethon
 
 
-## [Настройки](https://github.com/GravelFire/b_usersbot/blob/main/.env-example/)
+## [Настройки](https://github.com/SP-l33t/realgoats-Telethon/blob/main/.env-example/)
 |          Настройки          |                                                                                                                              Описание                                                                                                                               |
 |:---------------------------:|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------:|
 |    **API_ID / API_HASH**    |                                                                                         Данные платформы, с которой будет запущена сессия Telegram (по умолчанию - android)                                                                                         |
 |   **GLOBAL_CONFIG_PATH**    | Определяет глобальный путь для accounts_config, proxies, sessions. <br/>Укажите абсолютный путь или используйте переменную окружения (по умолчанию - переменная окружения: **TG_FARM**)<br/> Если переменной окружения не существует, использует директорию скрипта |
+|        **FIX_CERT**         |                                                                                              Попытаться исправить ошибку SSLCertVerificationError ( True / **False** )                                                                                              |
 |         **REF_ID**          |                                                                                               Ваш идентификатор реферала после startapp= (Ваш идентификатор telegram)                                                                                               |
 | **USE_RANDOM_DELAY_IN_RUN** |                                                                                                  Использовать ли рандомную задержку при запуске (**True** / False)                                                                                                  |
 |   **RANDOM_DELAY_IN_RUN**   |                                                                                                           Рандомная задержка при запуске (напр. [0, 15])                                                                                                            |
@@ -45,10 +52,10 @@
 3. Запишите `API_ID` и `API_HASH` в файле `.env`, предоставленные после регистрации вашего приложения.
 
 ## Установка
-Вы можете скачать [**Репозиторий**](https://github.com/GravelFire/realgoats_bot) клонированием на вашу систему и установкой необходимых зависимостей:
+Вы можете скачать [**Репозиторий**](https://github.com/GravelFire/realgoats-Telethon) клонированием на вашу систему и установкой необходимых зависимостей:
 ```shell
-git clone https://github.com/GravelFire/realgoats_bot.git
-cd realgoats_bot
+git clone https://github.com/GravelFire/realgoats-Telethon.git
+cd realgoats-Telethon
 ```
 
 Затем для автоматической установки введите:
@@ -75,9 +82,9 @@ python3 main.py
 
 Также для быстрого запуска вы можете использовать аргументы, например:
 ```shell
-~/realgoats_bot >>> python3 main.py --action (1/2)
+~/realgoats-Telethon >>> python3 main.py --action (1/2)
 # Or
-~/realgoats_bot >>> python3 main.py -a (1/2)
+~/realgoats-Telethon >>> python3 main.py -a (1/2)
 
 # 1 - Запускает кликер
 # 2 - Создает сессию
@@ -96,9 +103,9 @@ python main.py
 
 Также для быстрого запуска вы можете использовать аргументы, например:
 ```shell
-~/realgoats_bot >>> python main.py --action (1/2)
+~/realgoats-Telethon >>> python main.py --action (1/2)
 # Или
-~/realgoats_bot >>> python main.py -a (1/2)
+~/realgoats-Telethon >>> python main.py -a (1/2)
 
 # 1 - Запускает кликер
 # 2 - Создает сессию
