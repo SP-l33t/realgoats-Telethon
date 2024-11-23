@@ -266,6 +266,10 @@ class Tapper:
                                 if bet_amount > balance or bet_amount < 100:
                                     logger.info(self.log_message(f"Not enough money to gamble. Balance: {balance}"))
                                     break
+                                elif balance <= settings.MIN_GAMBLING_BALANCE:
+                                    logger.info(self.log_message(f"Balance is less than MIN_GAMBLING_BALANCE. "
+                                                                 f"Stopping gambling. Balance: {balance}"))
+                                    break
                                 await asyncio.sleep(uniform(7, 10))
                                 moves = []
                                 if not game.get('stateGame') or game.get('stateGame', {}).get('is_completed'):
