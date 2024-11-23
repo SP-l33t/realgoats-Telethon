@@ -13,4 +13,5 @@ pyrogram==2.0.106
 PySocks==1.7.1
 python-socks==2.5.1
 Telethon==1.36.0
+tenacity==9.0.0
 ua_generator

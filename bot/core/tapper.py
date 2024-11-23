@@ -1,43 +1,28 @@
 import aiohttp
 import asyncio
-import functools
 import json
-import random
-import re
 from urllib.parse import unquote, parse_qs
 from aiocfscrape import CloudflareScraper
 from aiohttp_proxy import ProxyConnector
 from better_proxy import Proxy
-from random import uniform, randint
+from random import uniform, randint, sample
+from tenacity import retry, stop_after_attempt, wait_incrementing, retry_if_exception_type
 from time import time
 
 from bot.utils.universal_telegram_client import UniversalTelegramClient
 
 from bot.config import settings
-from typing import Callable
 from bot.utils import logger, log_error, config_utils, date_utils, CONFIG_PATH, first_run
 from bot.exceptions import InvalidSession
 from .headers import headers, get_sec_ch_ua
 
-
-def error_handler(func: Callable):
-    @functools.wraps(func)
-    async def wrapper(*args, **kwargs):
-        retries = 2
-        while retries >= 0:
-            try:
-                return await func(*args, **kwargs)
-            except (asyncio.exceptions.TimeoutError, aiohttp.ServerDisconnectedError,
-                    aiohttp.ClientProxyConnectionError) as e:
-                if retries > 0:
-                    log_error(f"Error: {type(e).__name__}. Retrying")
-                    retries -= 1
-                    await asyncio.sleep(1)
-                else:
-                    raise
-            except Exception as e:
-                await asyncio.sleep(1)
-    return wrapper
+API_CATCHING = "https://api-catching.goatsbot.xyz"
+API_CHECKIN = "https://api-checkin.goatsbot.xyz"
+API_DOGS = "https://api-dogs.goatsbot.xyz"
+API_ME = "https://api-me.goatsbot.xyz"
+API_MISSION = "https://api-mission.goatsbot.xyz"
+DEV_API = "https://dev-api.goatsbot.xyz"
+DEV_API_V2 = "https://dev-api-v2.goatsbot.xyz"
 
 
 class Tapper:
@@ -79,40 +64,6 @@ class Tapper:
 
         return tg_web_data
 
-    @staticmethod
-    async def make_request(http_client: CloudflareScraper, method, url=None, **kwargs):
-        response = await http_client.request(method, url, **kwargs)
-        response.raise_for_status()
-        response_json = await response.json()
-        return response_json
-
-    @error_handler
-    async def login(self, http_client: CloudflareScraper, init_data):
-        http_client.headers['Rawdata'] = init_data
-        return await self.make_request(http_client, 'POST', url="https://dev-api.goatsbot.xyz/auth/login", json={})
-
-    @error_handler
-    async def get_me_info(self, http_client: CloudflareScraper):
-        return await self.make_request(http_client, 'GET', url="https://api-me.goatsbot.xyz/users/me")
-
-    @error_handler
-    async def get_tasks(self, http_client: CloudflareScraper) -> dict:
-        return await self.make_request(http_client, 'GET', url='https://api-mission.goatsbot.xyz/missions/user')
-
-    @error_handler
-    async def done_task(self, http_client: CloudflareScraper, task_id: str):
-        return await self.make_request(http_client, 'POST',
-                                       url=f'https://dev-api.goatsbot.xyz/missions/action/{task_id}')
-
-    @error_handler
-    async def get_checkin_options(self, http_client: CloudflareScraper):
-        return await self.make_request(http_client, 'GET', url="https://api-checkin.goatsbot.xyz/checkin/user")
-
-    @error_handler
-    async def perform_checkin(self, http_client: CloudflareScraper, checkin_id: str):
-        return await self.make_request(http_client, 'POST',
-                                       url=f'https://api-checkin.goatsbot.xyz/checkin/action/{checkin_id}')
-
     async def check_proxy(self, http_client: CloudflareScraper) -> bool:
         proxy_conn = http_client.connector
         if proxy_conn and not hasattr(proxy_conn, '_proxy_host'):
@@ -127,16 +78,96 @@ class Tapper:
             log_error(self.log_message(f"Proxy: {proxy_url} | Error: {type(error).__name__}"))
             return False
 
+    @retry(stop=stop_after_attempt(4),
+           wait=wait_incrementing(1, 3),
+           retry=retry_if_exception_type((
+                   asyncio.exceptions.TimeoutError,
+                   aiohttp.ServerDisconnectedError,
+                   aiohttp.ClientProxyConnectionError
+           )))
+    async def make_request(self, http_client: CloudflareScraper, method, url=None, **kwargs):
+        response = await http_client.request(method, url, **kwargs)
+        if response.status in range(200, 300):
+            return await response.json() if 'json' in response.content_type else await response.text()
+        else:
+            error_json = await response.json() if 'json' in response.content_type else {}
+            error_text = f"Error: {error_json}" if error_json else ""
+            if settings.DEBUG_LOGGING:
+                logger.warning(self.log_message(
+                    f"{method} Request to {url} failed with {response.status} code. {error_text}"))
+            return error_json
+
+    async def login(self, http_client: CloudflareScraper, init_data):
+        rawdata = {'Rawdata': init_data}
+        return await self.make_request(http_client, 'POST', url=f"{DEV_API}/auth/login", json={}, headers=rawdata)
+
+    async def get_me_info(self, http_client: CloudflareScraper):
+        return await self.make_request(http_client, 'GET', url=f"{API_ME}/users/me")
+
+    async def get_goat_pass_info(self, http_client: CloudflareScraper):
+        return await self.make_request(http_client, 'GET', url=f"{DEV_API_V2}/users/goat-pass")
+
+    async def get_tasks(self, http_client: CloudflareScraper) -> dict:
+        return await self.make_request(http_client, 'GET', url=f'{API_MISSION}/missions/user')
+
+    async def done_task(self, http_client: CloudflareScraper, task_id: str):
+        return await self.make_request(http_client, 'POST', url=f'{DEV_API}/missions/action/{task_id}')
+
+    async def get_checkin_options(self, http_client: CloudflareScraper):
+        return await self.make_request(http_client, 'GET', url=f"{API_CHECKIN}/checkin/user")
+
+    async def perform_checkin(self, http_client: CloudflareScraper, checkin_id: str):
+        return await self.make_request(http_client, 'POST', url=f'{API_CHECKIN}/checkin/action/{checkin_id}')
+
+    async def get_cinema(self, http_client: CloudflareScraper):
+        return (await self.make_request(http_client, 'GET', url=f"{DEV_API}/goat-cinema")).get('remainTime', 0)
+
+    async def watch_movie(self, http_client: CloudflareScraper):
+        return await self.make_request(http_client, 'POST', url=f"{DEV_API}/goat-cinema/watch")
+
+    async def get_catching_game_info(self, http_client: CloudflareScraper):
+        return await self.make_request(http_client,'GET', url=f"{API_CATCHING}/catching")
+
+    async def start_new_game(self, http_client: CloudflareScraper, location: int, bet_amount: int):
+        payload = {"location": location, "bomb": 5, "bet_amount": bet_amount}
+        await self.make_request(http_client, 'OPTIONS', url=f"{API_CATCHING}/catching/new-game")
+        response = await self.make_request(http_client, 'POST', url=f"{API_CATCHING}/catching/new-game", json=payload)
+        if response.get('message', "") == "Too many requests from this user":
+            await asyncio.sleep(5, 10)
+            return await self.start_new_game(http_client, location, bet_amount)
+        else:
+            return response
+
+    async def continue_game(self, http_client: CloudflareScraper, location: int, game_id, opt: bool = False):
+        if opt:
+            await self.make_request(http_client, 'OPTIONS', url=f"{API_CATCHING}/catching/continue-game/{game_id}")
+        payload = {"location": location}
+        response = await self.make_request(http_client, 'POST', url=f"{API_CATCHING}/catching/continue-game/{game_id}",
+                                           json=payload)
+        if response.get('message', "") == "Too many requests from this user":
+            await asyncio.sleep(3, 5)
+            return await self.continue_game(http_client, location, game_id)
+        else:
+            return response
+
+    async def cashout_game(self, http_client: CloudflareScraper, game_id):
+        await self.make_request(http_client, 'OPTIONS', url=f"{API_CATCHING}/catching/cashout/{game_id}")
+        response = await self.make_request(http_client, 'POST', url=f"{API_CATCHING}/catching/cashout/{game_id}")
+        if response.get('message', "") == "Too many requests from this user":
+            await asyncio.sleep(3, 5)
+            return await self.cashout_game(http_client, game_id)
+        else:
+            return response
+
     async def run(self) -> None:
-        if settings.USE_RANDOM_DELAY_IN_RUN:
-            random_delay = random.uniform(settings.RANDOM_DELAY_IN_RUN[0], settings.RANDOM_DELAY_IN_RUN[1])
-            logger.info(self.log_message(f"Bot will start in <lc>{int(random_delay)}s</lc>"))
-            await asyncio.sleep(random_delay)
+        random_delay = uniform(1, settings.SESSION_START_DELAY)
+        logger.info(self.log_message(f"Bot will start in <lr>{int(random_delay)}s</lr>"))
+        await asyncio.sleep(delay=random_delay)
 
         access_token_created_time = 0
         init_data = None
 
-        token_live_time = random.randint(3500, 3600)
+        token_live_time = uniform(3500, 3600)
 
         proxy_conn = {'connector': ProxyConnector.from_url(self.proxy)} if self.proxy else {}
         async with CloudflareScraper(headers=self.headers, timeout=aiohttp.ClientTimeout(60), **proxy_conn) as http_client:
@@ -161,22 +192,25 @@ class Tapper:
 
                     access_token = login_data.get('tokens', {}).get('access', {}).get('token', None)
                     if not access_token:
-                        logger.info(self.log_message(f"🐐 <lc>Login failed</lc>"))
+                        logger.info(self.log_message(f"🐐 Login failed. Sleep <lc>300</lc>s"))
                         await asyncio.sleep(300)
-                        logger.info(self.log_message(f"Sleep <lc>300s</lc>"))
                         continue
 
-                    logger.info(self.log_message(f"🐐 <lc>Login successful</lc>"))
                     if self.tg_client.is_fist_run:
                         await first_run.append_recurring_session(self.session_name)
                     http_client.headers['Authorization'] = f'Bearer {access_token}'
-                    me_info = await self.get_me_info(http_client=http_client)
-                    logger.info(self.log_message(f"Age: {me_info.get('age')} | Balance: {me_info.get('balance')}"))
+                    balance = (await self.get_me_info(http_client=http_client)).get('balance')
+                    pass_info = await self.get_goat_pass_info(http_client)
+                    pass_pts = pass_info.get('userStat', {}).get('pass_point', 0)
+                    total_earn = round(pass_info.get('userStat', {}).get('totalEarn', 0) / 10000000 * 100, 2)
+                    logger.info(self.log_message(
+                        f"🐐 <lc>Login successful</lc> | Balance: <lc>{balance}</lc> | Pass points: <lc>{pass_pts}</lc>"
+                        f" | Gambling progress: <lc>{total_earn}%</lc>"))
 
                     tasks = await self.get_tasks(http_client=http_client)
                     for project, project_tasks in tasks.items():
                         for task in project_tasks:
-                            if not task.get('status'):
+                            if not task.get('status') or task.get('cooldown_time'):
                                 task_id = task.get('_id')
                                 task_name = task.get('name')
                                 task_reward = task.get('reward')
@@ -187,11 +221,13 @@ class Tapper:
 
                                 if done_result and done_result.get('status') == 'success':
                                     logger.info(self.log_message(
-                                        f"Task completed successfully: {project}: {task_name} | Reward: +{task_reward}"))
+                                        f"Task completed successfully: <lc>{project}</lc>: <lc>{task_name}</lc> | "
+                                        f"Reward: <lc>{task_reward} coins</lc>"))
                                 else:
-                                    logger.warning(self.log_message(f"Failed to complete task: {project}: {task_name}"))
+                                    logger.warning(self.log_message(
+                                        f"Failed to complete task: <lc>{project}</lc>: <lc>{task_name}</lc>"))
 
-                            await asyncio.sleep(5)
+                                await asyncio.sleep(uniform(3, 7))
 
                     checkin = await self.get_checkin_options(http_client=http_client)
                     last_checkin = checkin.get('lastCheckinTime')
@@ -200,21 +236,99 @@ class Tapper:
                             if (last_checkin == 0 or date_utils.is_next_day(last_checkin)) and day.get('status') is False:
                                 result = await self.perform_checkin(http_client=http_client, checkin_id=day.get('_id'))
                                 if result.get('status') == "success":
-                                    logger.success(self.log_message(f"Successfully checked in: {day.get('reward')} points"))
+                                    logger.success(self.log_message(
+                                        f"Successfully checked in: {day.get('reward')} points"))
                                     break
                                 else:
                                     logger.warning(self.log_message("Failed to perform checkin activity"))
+
+                    await asyncio.sleep(uniform(2, 5))
+                    for _ in range(await self.get_cinema(http_client)):
+                        reward = await self.watch_movie(http_client)
+                        amount = reward.get('reward')
+                        if amount:
+                            logger.success(self.log_message(
+                                f"Watched a movie. Reward: <lc>{amount} {reward.get('unit')}</lc>"))
+                            await asyncio.sleep(uniform(5, 15))
+                        else:
+                            logger.warning(self.log_message("Failed to watch a movie"))
+                            break
+
+                    if settings.ENABLE_GAMBLING:
+                        games_left = randint(settings.MAX_GAMES//2, settings.MAX_GAMES)
+                        balance = (await self.get_me_info(http_client=http_client)).get('balance', 0)
+                        game = await self.get_catching_game_info(http_client)
+                        bet_amount = max(int(balance * 0.00025), 100)
+                        if balance > settings.MIN_GAMBLING_BALANCE:
+                            while True:
+                                games_left -= 1
+                                if bet_amount > balance or bet_amount < 100:
+                                    logger.info(self.log_message(f"Not enough money to gamble. Balance: {balance}"))
+                                    break
+                                await asyncio.sleep(uniform(7, 10))
+                                moves = []
+                                if not game.get('stateGame') or game.get('stateGame', {}).get('is_completed'):
+                                    moves = sample(range(1, 17), 2)
+                                    game = await self.start_new_game(http_client, moves[0], bet_amount)
+                                    game_id = game.get('stateGame', {}).get('_id')
+                                    balance = game.get("user", {}).get('balance', 0)
+                                    if game.get('stateGame', {}).get('bomb_location', []):
+                                        logger.info(self.log_message(f"Game lost. <lc>-{bet_amount}</lc> coins | "
+                                                                     f"Balance: <lc>{balance}</lc>"))
+                                        bet_amount = int(bet_amount * 2)
+                                        game = {}
+                                        continue
+                                elif game.get('stateGame', {}).get('_id'):
+                                    game_id = game.get('stateGame', {}).get('_id')
+
+                                if game_id:
+                                    can_claim = True
+                                    send_opt = True
+                                    for x in moves[1:] if moves else range(0):
+                                        await asyncio.sleep(uniform(1, 5))
+                                        continue_game = await self.continue_game(http_client, x, game_id, send_opt)
+                                        if continue_game.get('message', "") == 'Game cashout completed':
+                                            can_claim = False
+                                            break
+                                        balance = continue_game.get('user', {}).get('balance', 0)
+                                        send_opt = False
+                                        if continue_game.get('stateGame', {}).get('bomb_location', []):
+                                            logger.info(self.log_message(f"Game lost. <lc>-{bet_amount}</lc> coins | "
+                                                                         f"Balance: <lc>{balance}</lc>"))
+                                            can_claim = False
+                                            bet_amount = int(bet_amount * 2)
+                                            break
+
+                                    if can_claim:
+                                        await asyncio.sleep(uniform(1, 5))
+                                        result = await self.cashout_game(http_client, game_id)
+                                        if result.get('message', "") == 'Game cashout completed':
+                                            game = {}
+                                            continue
+                                        balance = result.get('user', {}).get('balance', 0)
+                                        reward = result.get('stateGame', {}).get('reward', 0)
+                                        bet_amount = result.get('stateGame', {}).get('bet_amount', 0)
+                                        if balance:
+                                            logger.success(self.log_message(
+                                                f"Game won. Got <lc>{reward-bet_amount}</lc> coins | "
+                                                f"Balance: <lc>{balance}</lc>"))
+                                            if games_left <= 0:
+                                                break
+                                        bet_amount = max(int(balance * 0.00025), 100)
+
+                                    game = {}
+
+                    sleep_time = uniform(settings.SLEEP_TIME[0], settings.SLEEP_TIME[1])
+                    logger.info(self.log_message(f"Sleep <lc>{int(sleep_time)}s</lc>"))
+                    await asyncio.sleep(sleep_time)
 
                 except InvalidSession as error:
                     raise error
 
                 except Exception as error:
-                    log_error(self.log_message(f"Unknown error: {error}"))
-                    await asyncio.sleep(delay=3)
-
-                sleep_time = random.randint(settings.SLEEP_TIME[0], settings.SLEEP_TIME[1])
-                logger.info(self.log_message(f"Sleep <lc>{sleep_time}s</lc>"))
-                await asyncio.sleep(delay=sleep_time)
+                    sleep_time = uniform(60, 120)
+                    log_error(self.log_message(f"Unknown error: {error}. Sleep <lc>{int(sleep_time)}</lc> seconds"))
+                    await asyncio.sleep(sleep_time)
 
 
 async def run_tapper(tg_client: UniversalTelegramClient):
