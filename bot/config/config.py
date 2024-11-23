@@ -7,6 +7,8 @@ class Settings(BaseSettings):
     API_ID: int
     API_HASH: str
     GLOBAL_CONFIG_PATH: str = "TG_FARM"
+    SESSIONS_BL: list[str] = []
+    SESSIONS_WL: list[str] = []
 
     FIX_CERT: bool = False
 

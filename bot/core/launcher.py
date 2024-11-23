@@ -65,7 +65,13 @@ def get_sessions(sessions_folder: str) -> list[str]:
     session_names = glob.glob(f"{sessions_folder}/*.session")
     session_names += glob.glob(f"{sessions_folder}/telethon/*.session")
     session_names += glob.glob(f"{sessions_folder}/pyrogram/*.session")
-    return [file.replace('.session', '') for file in sorted(session_names)]
+    session_names = [file.removesuffix('.session') for file in sorted(session_names)]
+    if settings.SESSIONS_WL:
+        return [session for session in sorted(session_names) if os.path.basename(session) in settings.SESSIONS_WL]
+    elif settings.SESSIONS_BL:
+        return [session for session in sorted(session_names) if os.path.basename(session) not in settings.SESSIONS_BL]
+    else:
+        return session_names
 
 
 async def get_tg_clients() -> list[UniversalTelegramClient]:

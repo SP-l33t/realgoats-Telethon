@@ -3,7 +3,7 @@ import asyncio
 import json
 from urllib.parse import unquote, parse_qs
 from aiocfscrape import CloudflareScraper
-from aiohttp_proxy import ProxyConnector
+from aiohttp_proxy import ProxyConnector, SocksError
 from better_proxy import Proxy
 from random import uniform, randint, sample
 from tenacity import retry, stop_after_attempt, wait_incrementing, retry_if_exception_type
@@ -79,11 +79,12 @@ class Tapper:
             return False
 
     @retry(stop=stop_after_attempt(4),
-           wait=wait_incrementing(1, 3),
+           wait=wait_incrementing(1, 4),
            retry=retry_if_exception_type((
                    asyncio.exceptions.TimeoutError,
                    aiohttp.ServerDisconnectedError,
-                   aiohttp.ClientProxyConnectionError
+                   aiohttp.ClientProxyConnectionError,
+                   SocksError
            )))
     async def make_request(self, http_client: CloudflareScraper, method, url=None, **kwargs):
         response = await http_client.request(method, url, **kwargs)
