@@ -203,10 +203,10 @@ class Tapper:
                     balance = (await self.get_me_info(http_client=http_client)).get('balance')
                     pass_info = await self.get_goat_pass_info(http_client)
                     pass_pts = pass_info.get('userStat', {}).get('pass_point', 0)
-                    total_earn = round(pass_info.get('userStat', {}).get('totalEarn', 0) / 10000000 * 100, 2)
+                    gambling_progress = round(pass_info.get('userStat', {}).get('totalEarn', 0) / 10000000 * 100, 2)
                     logger.info(self.log_message(
                         f"🐐 <lc>Login successful</lc> | Balance: <lc>{balance}</lc> | Pass points: <lc>{pass_pts}</lc>"
-                        f" | Gambling progress: <lc>{total_earn}%</lc>"))
+                        f" | Gambling progress: <lc>{gambling_progress}%</lc>"))
 
                     tasks = await self.get_tasks(http_client=http_client)
                     for project, project_tasks in tasks.items():
@@ -255,7 +255,7 @@ class Tapper:
                             logger.warning(self.log_message("Failed to watch a movie"))
                             break
 
-                    if settings.ENABLE_GAMBLING:
+                    if settings.ENABLE_GAMBLING and not gambling_progress >= 100:
                         games_left = randint(settings.MAX_GAMES//2, settings.MAX_GAMES)
                         balance = (await self.get_me_info(http_client=http_client)).get('balance', 0)
                         game = await self.get_catching_game_info(http_client)
