@@ -12,12 +12,16 @@ class Settings(BaseSettings):
 
     FIX_CERT: bool = False
 
+    CEX_UID: str | None = None
+
+    CEX_ADDRESS: str | None = None
+
     REF_ID: str = "d3f52790-77b5-4809-a0ea-56b4e4ba1ee6"
     SESSION_START_DELAY: int = 360
     SLEEP_TIME: list[int] = [3600, 10800]
 
     ENABLE_GAMBLING: bool = False
-    MIN_GAMBLING_BALANCE: int = 100000
+    MIN_GAMBLING_BALANCE: int = 300000
     MAX_GAMES: int = 100
 
     SESSIONS_PER_PROXY: int = 1

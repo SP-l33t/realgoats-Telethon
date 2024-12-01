@@ -1,4 +1,5 @@
 import aiohttp
+import aiofiles
 import asyncio
 import json
 from urllib.parse import unquote, parse_qs
@@ -28,7 +29,7 @@ DEV_API_V2 = "https://dev-api-v2.goatsbot.xyz"
 class Tapper:
     def __init__(self, tg_client: UniversalTelegramClient):
         self.tg_client = tg_client
-        self.session_name = tg_client.session_name
+        self.session_name: str = tg_client.session_name
 
         session_config = config_utils.get_session_config(self.session_name, CONFIG_PATH)
 
@@ -160,7 +161,12 @@ class Tapper:
         else:
             return response
 
-    async def run(self) -> None:
+    async def link_bitget(self, http_client: CloudflareScraper, amount):
+        payload = {"cex": "bitget", "uid": settings.CEX_UID, "address": settings.CEX_ADDRESS, "amount": amount}
+        response = await self.make_request(http_client, 'POST', url=f"{DEV_API}/cex", json=payload)
+        return response.get('data', {}).get('uid', "") == settings.CEX_UID
+
+    async def run(self):
         random_delay = uniform(1, settings.SESSION_START_DELAY)
         logger.info(self.log_message(f"Bot will start in <lr>{int(random_delay)}s</lr>"))
         await asyncio.sleep(delay=random_delay)
@@ -199,133 +205,153 @@ class Tapper:
 
                     if self.tg_client.is_fist_run:
                         await first_run.append_recurring_session(self.session_name)
+
                     http_client.headers['Authorization'] = f'Bearer {access_token}'
-                    balance = (await self.get_me_info(http_client=http_client)).get('balance')
-                    pass_info = await self.get_goat_pass_info(http_client)
-                    pass_pts = pass_info.get('userStat', {}).get('pass_point', 0)
-                    gambling_progress = round(pass_info.get('userStat', {}).get('totalEarn', 0) / 10000000 * 100, 2)
+
+                    user_info = await self.get_me_info(http_client=http_client)
+                    airdrop_balance = user_info.get('real_balance', 0)
+                    is_banned = user_info.get('is_blocked', False) or user_info.get('banned', False)
                     logger.info(self.log_message(
-                        f"🐐 <lc>Login successful</lc> | Balance: <lc>{balance}</lc> | Pass points: <lc>{pass_pts}</lc>"
-                        f" | Gambling progress: <lc>{gambling_progress}%</lc>"))
+                        f"🐐 <lc>Login successful</lc> | Airdrop Balance: <lc>{airdrop_balance}</lc> | "
+                        f"Is banned: <lc>{is_banned}</lc>"))
+                    if not airdrop_balance or is_banned:
+                        return f"{self.session_name.lower()};0;{is_banned}\n"
 
-                    tasks = await self.get_tasks(http_client=http_client)
-                    for project, project_tasks in tasks.items():
-                        for task in project_tasks:
-                            if not task.get('status') or task.get('cooldown_time'):
-                                task_id = task.get('_id')
-                                task_name = task.get('name')
-                                task_reward = task.get('reward')
+                    elif settings.CEX_UID and settings.CEX_ADDRESS:
+                        resp = await self.link_bitget(http_client, airdrop_balance)
+                        return None if not resp else \
+                            f"{self.session_name.lower().strip()};{airdrop_balance};{is_banned};bitget\n"
+                    else:
+                        return f"{self.session_name.lower().strip()};{airdrop_balance};{is_banned};False\n"
 
-                                logger.info(self.log_message(f"Attempting task: {project}: {task_name}"))
 
-                                done_result = await self.done_task(http_client=http_client, task_id=task_id)
+                    # balance = (await self.get_me_info(http_client=http_client)).get('balance')
+                    # pass_info = await self.get_goat_pass_info(http_client)
+                    # pass_pts = pass_info.get('userStat', {}).get('pass_point', 0)
+                    # gambling_progress = round(pass_info.get('userStat', {}).get('totalEarn', 0) / 10000000 * 100, 2)
+                    # logger.info(self.log_message(
+                    #     f"🐐 <lc>Login successful</lc> | Balance: <lc>{balance}</lc> | Pass points: <lc>{pass_pts}</lc>"
+                    #     f" | Gambling progress: <lc>{gambling_progress}%</lc>"))
 
-                                if done_result and done_result.get('status') == 'success':
-                                    logger.info(self.log_message(
-                                        f"Task completed successfully: <lc>{project}</lc>: <lc>{task_name}</lc> | "
-                                        f"Reward: <lc>{task_reward} coins</lc>"))
-                                else:
-                                    logger.warning(self.log_message(
-                                        f"Failed to complete task: <lc>{project}</lc>: <lc>{task_name}</lc>"))
 
-                                await asyncio.sleep(uniform(3, 7))
+                    # tasks = await self.get_tasks(http_client=http_client)
+                    # for project, project_tasks in tasks.items():
+                    #     for task in project_tasks:
+                    #         if not task.get('status') or task.get('cooldown_time'):
+                    #             task_id = task.get('_id')
+                    #             task_name = task.get('name')
+                    #             task_reward = task.get('reward')
+                    #
+                    #             logger.info(self.log_message(f"Attempting task: {project}: {task_name}"))
+                    #
+                    #             done_result = await self.done_task(http_client=http_client, task_id=task_id)
+                    #
+                    #             if done_result and done_result.get('status') == 'success':
+                    #                 logger.info(self.log_message(
+                    #                     f"Task completed successfully: <lc>{project}</lc>: <lc>{task_name}</lc> | "
+                    #                     f"Reward: <lc>{task_reward} coins</lc>"))
+                    #             else:
+                    #                 logger.warning(self.log_message(
+                    #                     f"Failed to complete task: <lc>{project}</lc>: <lc>{task_name}</lc>"))
+                    #
+                    #             await asyncio.sleep(uniform(3, 7))
 
-                    checkin = await self.get_checkin_options(http_client=http_client)
-                    last_checkin = checkin.get('lastCheckinTime')
-                    if checkin and last_checkin is not None:
-                        for day in checkin.get('result', []):
-                            if (last_checkin == 0 or date_utils.is_next_day(last_checkin)) and day.get('status') is False:
-                                result = await self.perform_checkin(http_client=http_client, checkin_id=day.get('_id'))
-                                if result.get('status') == "success":
-                                    logger.success(self.log_message(
-                                        f"Successfully checked in: {day.get('reward')} points"))
-                                    break
-                                else:
-                                    logger.warning(self.log_message("Failed to perform checkin activity"))
+                    # checkin = await self.get_checkin_options(http_client=http_client)
+                    # last_checkin = checkin.get('lastCheckinTime')
+                    # if checkin and last_checkin is not None:
+                    #     for day in checkin.get('result', []):
+                    #         if (last_checkin == 0 or date_utils.is_next_day(last_checkin)) and day.get('status') is False:
+                    #             result = await self.perform_checkin(http_client=http_client, checkin_id=day.get('_id'))
+                    #             if result.get('status') == "success":
+                    #                 logger.success(self.log_message(
+                    #                     f"Successfully checked in: {day.get('reward')} points"))
+                    #                 break
+                    #             else:
+                    #                 logger.warning(self.log_message("Failed to perform checkin activity"))
 
-                    await asyncio.sleep(uniform(2, 5))
-                    for _ in range(await self.get_cinema(http_client)):
-                        reward = await self.watch_movie(http_client)
-                        amount = reward.get('reward')
-                        if amount:
-                            logger.success(self.log_message(
-                                f"Watched a movie. Reward: <lc>{amount} {reward.get('unit')}</lc>"))
-                            await asyncio.sleep(uniform(5, 15))
-                        else:
-                            logger.warning(self.log_message("Failed to watch a movie"))
-                            break
+                    # await asyncio.sleep(uniform(2, 5))
+                    # for _ in range(await self.get_cinema(http_client)):
+                    #     reward = await self.watch_movie(http_client)
+                    #     amount = reward.get('reward')
+                    #     if amount:
+                    #         logger.success(self.log_message(
+                    #             f"Watched a movie. Reward: <lc>{amount} {reward.get('unit')}</lc>"))
+                    #         await asyncio.sleep(uniform(5, 15))
+                    #     else:
+                    #         logger.warning(self.log_message("Failed to watch a movie"))
+                    #         break
+                    #
+                    # if settings.ENABLE_GAMBLING and not gambling_progress >= 100:
+                    #     games_left = randint(settings.MAX_GAMES//2, settings.MAX_GAMES)
+                    #     balance = (await self.get_me_info(http_client=http_client)).get('balance', 0)
+                    #     game = await self.get_catching_game_info(http_client)
+                    #     bet_amount = max(int(balance * 0.00025), 100)
+                    #     if balance > settings.MIN_GAMBLING_BALANCE:
+                    #         while True:
+                    #             games_left -= 1
+                    #             if bet_amount > balance or bet_amount < 100:
+                    #                 logger.info(self.log_message(f"Not enough money to gamble. Balance: {balance}"))
+                    #                 break
+                    #             elif balance <= settings.MIN_GAMBLING_BALANCE:
+                    #                 logger.info(self.log_message(f"Balance is less than MIN_GAMBLING_BALANCE. "
+                    #                                              f"Stopping gambling. Balance: {balance}"))
+                    #                 break
+                    #             await asyncio.sleep(uniform(7, 10))
+                    #             moves = []
+                    #             if not game.get('stateGame') or game.get('stateGame', {}).get('is_completed'):
+                    #                 moves = sample(range(1, 17), 2)
+                    #                 game = await self.start_new_game(http_client, moves[0], bet_amount)
+                    #                 game_id = game.get('stateGame', {}).get('_id')
+                    #                 balance = game.get("user", {}).get('balance', 0)
+                    #                 if game.get('stateGame', {}).get('bomb_location', []):
+                    #                     logger.info(self.log_message(f"Game lost. <lc>-{bet_amount}</lc> coins | "
+                    #                                                  f"Balance: <lc>{balance}</lc>"))
+                    #                     bet_amount = int(bet_amount * 2)
+                    #                     game = {}
+                    #                     continue
+                    #             elif game.get('stateGame', {}).get('_id'):
+                    #                 game_id = game.get('stateGame', {}).get('_id')
+                    #
+                    #             if game_id:
+                    #                 can_claim = True
+                    #                 send_opt = True
+                    #                 for x in moves[1:] if moves else range(0):
+                    #                     await asyncio.sleep(uniform(1, 5))
+                    #                     continue_game = await self.continue_game(http_client, x, game_id, send_opt)
+                    #                     if continue_game.get('message', "") == 'Game cashout completed':
+                    #                         can_claim = False
+                    #                         break
+                    #                     balance = continue_game.get('user', {}).get('balance', 0)
+                    #                     send_opt = False
+                    #                     if continue_game.get('stateGame', {}).get('bomb_location', []):
+                    #                         logger.info(self.log_message(f"Game lost. <lc>-{bet_amount}</lc> coins | "
+                    #                                                      f"Balance: <lc>{balance}</lc>"))
+                    #                         can_claim = False
+                    #                         bet_amount = int(bet_amount * 2)
+                    #                         break
+                    #
+                    #                 if can_claim:
+                    #                     await asyncio.sleep(uniform(1, 5))
+                    #                     result = await self.cashout_game(http_client, game_id)
+                    #                     if result.get('message', "") == 'Game cashout completed':
+                    #                         game = {}
+                    #                         continue
+                    #                     balance = result.get('user', {}).get('balance', 0)
+                    #                     reward = result.get('stateGame', {}).get('reward', 0)
+                    #                     bet_amount = result.get('stateGame', {}).get('bet_amount', 0)
+                    #                     if balance:
+                    #                         logger.success(self.log_message(
+                    #                             f"Game won. Got <lc>{reward-bet_amount}</lc> coins | "
+                    #                             f"Balance: <lc>{balance}</lc>"))
+                    #                         if games_left <= 0:
+                    #                             break
+                    #                     bet_amount = max(int(balance * 0.00025), 100)
+                    #
+                    #                 game = {}
 
-                    if settings.ENABLE_GAMBLING and not gambling_progress >= 100:
-                        games_left = randint(settings.MAX_GAMES//2, settings.MAX_GAMES)
-                        balance = (await self.get_me_info(http_client=http_client)).get('balance', 0)
-                        game = await self.get_catching_game_info(http_client)
-                        bet_amount = max(int(balance * 0.00025), 100)
-                        if balance > settings.MIN_GAMBLING_BALANCE:
-                            while True:
-                                games_left -= 1
-                                if bet_amount > balance or bet_amount < 100:
-                                    logger.info(self.log_message(f"Not enough money to gamble. Balance: {balance}"))
-                                    break
-                                elif balance <= settings.MIN_GAMBLING_BALANCE:
-                                    logger.info(self.log_message(f"Balance is less than MIN_GAMBLING_BALANCE. "
-                                                                 f"Stopping gambling. Balance: {balance}"))
-                                    break
-                                await asyncio.sleep(uniform(7, 10))
-                                moves = []
-                                if not game.get('stateGame') or game.get('stateGame', {}).get('is_completed'):
-                                    moves = sample(range(1, 17), 2)
-                                    game = await self.start_new_game(http_client, moves[0], bet_amount)
-                                    game_id = game.get('stateGame', {}).get('_id')
-                                    balance = game.get("user", {}).get('balance', 0)
-                                    if game.get('stateGame', {}).get('bomb_location', []):
-                                        logger.info(self.log_message(f"Game lost. <lc>-{bet_amount}</lc> coins | "
-                                                                     f"Balance: <lc>{balance}</lc>"))
-                                        bet_amount = int(bet_amount * 2)
-                                        game = {}
-                                        continue
-                                elif game.get('stateGame', {}).get('_id'):
-                                    game_id = game.get('stateGame', {}).get('_id')
-
-                                if game_id:
-                                    can_claim = True
-                                    send_opt = True
-                                    for x in moves[1:] if moves else range(0):
-                                        await asyncio.sleep(uniform(1, 5))
-                                        continue_game = await self.continue_game(http_client, x, game_id, send_opt)
-                                        if continue_game.get('message', "") == 'Game cashout completed':
-                                            can_claim = False
-                                            break
-                                        balance = continue_game.get('user', {}).get('balance', 0)
-                                        send_opt = False
-                                        if continue_game.get('stateGame', {}).get('bomb_location', []):
-                                            logger.info(self.log_message(f"Game lost. <lc>-{bet_amount}</lc> coins | "
-                                                                         f"Balance: <lc>{balance}</lc>"))
-                                            can_claim = False
-                                            bet_amount = int(bet_amount * 2)
-                                            break
-
-                                    if can_claim:
-                                        await asyncio.sleep(uniform(1, 5))
-                                        result = await self.cashout_game(http_client, game_id)
-                                        if result.get('message', "") == 'Game cashout completed':
-                                            game = {}
-                                            continue
-                                        balance = result.get('user', {}).get('balance', 0)
-                                        reward = result.get('stateGame', {}).get('reward', 0)
-                                        bet_amount = result.get('stateGame', {}).get('bet_amount', 0)
-                                        if balance:
-                                            logger.success(self.log_message(
-                                                f"Game won. Got <lc>{reward-bet_amount}</lc> coins | "
-                                                f"Balance: <lc>{balance}</lc>"))
-                                            if games_left <= 0:
-                                                break
-                                        bet_amount = max(int(balance * 0.00025), 100)
-
-                                    game = {}
-
-                    sleep_time = uniform(settings.SLEEP_TIME[0], settings.SLEEP_TIME[1])
-                    logger.info(self.log_message(f"Sleep <lc>{int(sleep_time)}s</lc>"))
-                    await asyncio.sleep(sleep_time)
+                    # sleep_time = uniform(settings.SLEEP_TIME[0], settings.SLEEP_TIME[1])
+                    # logger.info(self.log_message(f"Sleep <lc>{int(sleep_time)}s</lc>"))
+                    # await asyncio.sleep(sleep_time)
 
                 except InvalidSession as error:
                     raise error
@@ -336,9 +362,23 @@ class Tapper:
                     await asyncio.sleep(sleep_time)
 
 
+async def is_recorded(session_name: str):
+    async with aiofiles.open('airdrop.csv', mode='a+') as file:
+        await file.seek(0)
+        lines = await file.readlines()
+    return bool([line for line in lines if session_name.strip().lower() in line])
+
+
+async def append_airdrop_info(data: str):
+    async with aiofiles.open('airdrop.csv', mode='a+') as file:
+        await file.writelines(data)
+
+
 async def run_tapper(tg_client: UniversalTelegramClient):
     runner = Tapper(tg_client=tg_client)
     try:
-        await runner.run()
+        result = await runner.run()
+        if result and not await is_recorded(runner.session_name):
+            await append_airdrop_info(result)
     except InvalidSession as e:
         logger.error(runner.log_message(f"Invalid Session: {e}"))
